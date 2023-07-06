@@ -1,0 +1,29 @@
+options mprint mlogic symbolgen nofmterr;
+
+%macro studyday(od1 /outputdataset1/,
+                od2 /outputdataset1/,
+                id1 /inputdataset1/,
+                id2 /inputdataset1/,
+                v1 /variable1/,
+                v2 /variable1/,
+                v3 /variable1/,
+                lib /libraryname/);
+proc sql;
+create table &od1 as
+select distinct &v1,&v2 from &lib..&id1
+order by &v1;
+quit;
+
+data &od2;
+set &lib..&id2;
+by &v1;
+if first.&v1;
+keep &v1 &v3;
+run;
+
+data ds3;
+merge &od1 &od2;
+by &v1;
+dmdy =  (&v2 - &v3) + (&v2 >= &v3);
+run;
+%mend;
