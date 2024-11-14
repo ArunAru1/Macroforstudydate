@@ -1,0 +1,94 @@
+
+
+
+%MACRO doit(pop=,cond=,events=Y);
+/******************************************************************
+*** Subset Data & Create Treatment Groups
+*******************************************************************/
+data adsl0;
+set ADAM.adsl(where=(&pop.="Y"));
+run;
+data adsl;
+ set adsl0;
+Output;
+TRT01AN = 99;
+Output;
+run;
+data adae;
+ merge ADAM.adae(in=a) adsl0(in=b);
+ by usubjid;
+ if a & b;
+run;
+data adae;
+ set adae(where=(&cond.));
+ if AEBODSYS="" then AEBODSYS="Uncoded";
+ if AEDECOD="" then AEDECOD="Uncoded";
+ Output;
+ TRT01AN=99;
+ Output;
+run;
+/******************************************************************
+*** PROC SQL to Create AE Table by SOC & PT
+*******************************************************************/
+proc sql noprint;
+/** Assigning Macro Variable for Number of Treatment Groups **/
+select count(distinct TRT01AN) into: numtrt trimmed from adsl;
+/** Assigning Macro Variable for Each Treatment Group **/
+select distinct TRT01AN into :TRT1 - :TRT&numtrt. from adsl order by TRT01AN;
+/** Denominators for each Treatment Group **/
+select count(distinct USUBJID) into :TOT1 - :TOT&numtrt. from adsl group by
+TRT01AN;
+/** Counting patients for each AEBODSYS, AEDECOD **/
+create table FROW as
+ select TRT01AN, 1 as grp, "Any Adverse Event" as text length=200,
+ count(distinct USUBJID) as VAL, count(*) as AE
+ from ADAE
+ group by TRT01AN
+
+ outer union corr
+ /** By AEBODSYS **/
+ select TRT01AN, AEBODSYS, 2 as grp, AEBODSYS as text length=200,
+ count(distinct USUBJID) as VAL, count(*) as AE,
+ (select count(distinct USUBJID)*-1 from ADAE
+ where TRT01AN=99 & AEBODSYS=a.AEBODSYS group by AEBODSYS)
+ as sort1
+ from ADAE a
+ group by TRT01AN, AEBODSYS
+ outer union corr
+ /** By AEBODSYS, AEDECOD **/
+ select TRT01AN, AEBODSYS, AEDECOD, 2 as grp,
+ " "||AEDECOD as text length=200,
+ count(distinct SUBJID) as VAL, count(*) as AE,
+ (select count(distinct USUBJID)*-1 from ADAE where TRT01AN=99 &
+ AEBODSYS=a.AEBODSYS group by
+ AEBODSYS)
+ as sort1,
+ (select count(distinct USUBJID)*-1 from ADAE where TRT01AN=99 &
+ AEBODSYS=a.AEBODSYS & AEDECOD=a.AEDECOD group by
+ AEBODSYS, AEDECOD)
+ as sort2
+ from ADAE a
+ group by TRT01AN, AEBODSYS, AEDECOD
+ order by TRT01AN, sort1, AEBODSYS, sort2, AEDECOD;
+/** Transposing by Treatment Group and Assigning Percentages **/
+create table Final as
+select sort1, AEBODSYS, sort2, AEDECOD, text, grp,
+ %DO i = 1 %TO &numtrt.;
+ max(case when TRT01AN = &&trt&i. then put(VAL,3.)||"("||
+ put(100*(VAL/&&tot&i.),5.1)||"%)"
+ %IF &events.=Y %THEN %DO; ||" ["||put(AE,5.)||"]" %END;
+ else put(0,3.) END) as COL&&TRT&i. length=200
+
+ %IF &i. ^= &numtrt. %THEN %DO;
+ ,
+ %END;
+ %END;
+from FROW
+group by sort1, AEBODSYS, sort2, AEDECOD, text, grp;
+quit;
+%MEND;
+%doit(pop=SAFFL,cond=TRTEMFL="Y");
+
+
+
+/*https://www.lexjansen.com/sesug/2024/17_Final_PDF.pdf*/
